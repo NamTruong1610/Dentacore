@@ -1,0 +1,11 @@
+generate new module for entity: nest g module (entity-name)
+generate new service for entity: nest g service (module-name)
+generate new controller for entity: nest g controller (module-name)
+boot up server: npm run start:dev
+create new nestjs project: nest new (project-name)
+download nest cli: npm i -g @nestjs/cli 
+
+Notes
+- static routes above dynamic ones (e.g. @Get('all') above @Get(':id'))
+- PatialType makes an object's every fields optional. When a dto extends another, it doesn't have to to send the whole objects with all fields, without PartialType, ValidationPipe rejects the request.
+- Any Service class that receives dependencies must have @Injectable() at the top
