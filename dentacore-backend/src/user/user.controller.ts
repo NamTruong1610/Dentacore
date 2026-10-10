@@ -8,6 +8,6 @@ export class UserController {
   ) {}
   @Get()
   getAllUsers() {
-    return [];
+    return this.userService.findAllUsers();
   }
 }
