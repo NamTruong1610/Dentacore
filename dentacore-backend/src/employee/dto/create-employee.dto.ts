@@ -1,5 +1,6 @@
-import { IsEmail, IsOptional, IsString, IsStrongPassword } from 'class-validator';
+import { IsEmail, IsOptional, IsString } from 'class-validator';
 
+// No password here: the server generates a temporary one and emails it to the employee.
 export class CreatePendingEmployeeDto {
   @IsEmail()
   email: string;
@@ -13,7 +14,4 @@ export class CreatePendingEmployeeDto {
   @IsOptional()
   @IsString()
   middleName?: string;
-
-  @IsString()
-  password: string;
 }

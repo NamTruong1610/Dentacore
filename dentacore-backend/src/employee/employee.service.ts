@@ -1,13 +1,24 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { PasswordService } from '../auth/password.service.js';
 import { Prisma } from '../generated/prisma/client.js';
+import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { createActivationToken } from './activation-token.js';
 import { CreatePendingEmployeeDto } from './dto/create-employee.dto.js';
+
+const INVITE_VALID_FOR_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 // Employees are soft-deleted: deleteEmployee sets deletedAt instead of removing the row,
 // so every read filters on deletedAt: null to hide deleted employees.
 @Injectable()
 export class EmployeeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly passwordService: PasswordService,
+    private readonly mailService: MailService,
+    private readonly config: ConfigService,
+  ) {}
 
   // READ all
   async findAllEmployees() {
@@ -25,11 +36,42 @@ export class EmployeeService {
     return employee;
   }
 
-  // CREATE
+  // CREATE (pending): an admin invites an employee, who then activates the account from the email
+  // TODO: only admins should be able to call this once auth exists
   async createPendingEmployee(createEmployeeDto: CreatePendingEmployeeDto) {
-    // Send email to employee 
-    
-    return await this.prisma.employee.create({ data: createEmployeeDto });
+    const temporaryPassword = this.passwordService.generateTemporaryPassword();
+    const passwordHash = await this.passwordService.hash(temporaryPassword);
+    const { token, tokenHash } = createActivationToken();
+    const expiresAt = new Date(Date.now() + INVITE_VALID_FOR_MS);
+
+    const activationUrl = new URL(
+      this.config.getOrThrow<string>('ACTIVATION_URL'),
+    );
+    activationUrl.searchParams.set('token', token);
+
+    // Create the employee and send the email in one transaction: if sending fails,
+    // the employee isn't saved, so there's never a pending account without an invite.
+    return await this.prisma.$transaction(
+      async (tx) => {
+        const employee = await tx.employee.create({
+          data: {
+            ...createEmployeeDto,
+            password: passwordHash,
+            activationTokenHash: tokenHash,
+            activationExpiresAt: expiresAt,
+          },
+        });
+        await this.mailService.sendEmployeeInvite(employee.email, {
+          firstName: employee.firstName,
+          employeeNumber: employee.employeeNumber,
+          temporaryPassword,
+          activationUrl: activationUrl.toString(),
+          expiresAt,
+        });
+        return employee;
+      },
+      { timeout: 15_000 }, // allow time for the SMTP server to respond
+    );
   }
 
   // UPDATE
