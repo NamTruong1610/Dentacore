@@ -55,14 +55,20 @@ export class SessionService {
   }
 
   /**
-   * Looks up the session for a cookie value. Returns it with its employee, or null if
-   * it doesn't exist, has expired, or the employee can no longer log in.
-   * Also extends the idle expiry (see TOUCH_INTERVAL_MS).
+   * Looks up the session for a cookie value. Returns it with its employee and their roles
+   * (with permissions), or null if it doesn't exist, has expired, or the employee can no
+   * longer log in. Also extends the idle expiry (see TOUCH_INTERVAL_MS).
    */
   async authenticate(token: string) {
     const session = await this.prisma.session.findUnique({
       where: { tokenHash: hashToken(token) },
-      include: { employee: true },
+      include: {
+        employee: {
+          include: {
+            roles: { include: { role: { include: { permissions: true } } } },
+          },
+        },
+      },
     });
     if (!session) {
       return null;

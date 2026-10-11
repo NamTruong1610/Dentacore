@@ -1,10 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { AuthContext } from '../auth/auth-context.js';
 import { PasswordService } from '../auth/password.service.js';
 import { SessionService } from '../auth/session.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { RoleService } from '../role/role.service.js';
 import { createToken } from '../auth/tokens.js';
 import { CreatePendingEmployeeDto } from './dto/create-employee.dto.js';
 
@@ -18,6 +20,7 @@ export class EmployeeService {
     private readonly prisma: PrismaService,
     private readonly passwordService: PasswordService,
     private readonly sessionService: SessionService,
+    private readonly roleService: RoleService,
     private readonly mailService: MailService,
     private readonly config: ConfigService,
   ) {}
@@ -39,8 +42,14 @@ export class EmployeeService {
   }
 
   // CREATE (pending): an admin invites an employee, who then activates the account from the email
-  // Requires login (SessionGuard). TODO: restrict to admins once role checks exist
-  async createPendingEmployee(createEmployeeDto: CreatePendingEmployeeDto) {
+  // Requires the employee:invite permission (see EmployeeController)
+  async createPendingEmployee(
+    actor: AuthContext,
+    { roleIds = [], ...createEmployeeDto }: CreatePendingEmployeeDto,
+  ) {
+    // Inviting someone with a role follows the same rules as giving it to them later.
+    await this.roleService.assertCanAssignRoles(actor, roleIds);
+
     const temporaryPassword = this.passwordService.generateTemporaryPassword();
     const passwordHash = await this.passwordService.hash(temporaryPassword);
     const { token, tokenHash } = createToken();
@@ -61,6 +70,7 @@ export class EmployeeService {
             password: passwordHash,
             activationTokenHash: tokenHash,
             activationExpiresAt: expiresAt,
+            roles: { create: roleIds.map((roleId) => ({ roleId })) },
           },
         });
         await this.mailService.sendEmployeeInvite(employee.email, {

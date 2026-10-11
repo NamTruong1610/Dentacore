@@ -21,7 +21,6 @@ model Employee {
   firstName      String
   lastName       String
   middleName     String?
-  role           Role           @default(EMPLOYEE)
   status         EmployeeStatus @default(PENDING)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -42,6 +41,42 @@ model Employee {
   addresses       Address[] // one employee has many addresses
   sessions        Session[]
   loginChallenges LoginChallenge[]
+  roles           EmployeeRole[] // an employee can have several roles
+}
+
+// Roles are created and edited by the business (see src/role). The permissions a role can hold
+// are defined in code (src/auth/permissions.ts), because only code can check them.
+model Role {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  name        String   @unique
+  description String?
+  // The built-in Admin role: has every permission (including ones added later) and can't be
+  // edited or deleted. Exactly one role has this set; it's created by a migration.
+  isAdmin     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+  employees   EmployeeRole[]
+}
+
+model RolePermission {
+  roleId     String @db.Uuid
+  role       Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission String // a key from src/auth/permissions.ts, e.g. "employee:invite"
+
+  @@id([roleId, permission])
+}
+
+model EmployeeRole {
+  employeeId String   @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  roleId     String   @db.Uuid
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade) // deleting a role removes it from everyone
+  assignedAt DateTime @default(now())
+
+  @@id([employeeId, roleId])
+  @@index([roleId])
 }
 
 // One row per logged-in device. The cookie holds a random token; only its hash is stored here.
@@ -72,11 +107,6 @@ model LoginChallenge {
   createdAt  DateTime @default(now())
 
   @@index([employeeId])
-}
-
-enum Role {
-  ADMIN
-  EMPLOYEE
 }
 
 enum EmployeeStatus {

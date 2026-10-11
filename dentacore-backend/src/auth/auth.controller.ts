@@ -80,10 +80,14 @@ export class AuthController {
     this.cookies.clearSession(res);
   }
 
-  // GET /auth/me — who is logged in
+  // GET /auth/me — who is logged in, their roles, and what they may do (for showing/hiding UI)
   @Get('me')
   me(@CurrentAuth() auth: AuthContext) {
-    return auth.employee;
+    return {
+      ...auth.employee,
+      roles: auth.roles,
+      permissions: [...auth.permissions].sort(),
+    };
   }
 
   // GET /auth/sessions — this employee's logged-in devices

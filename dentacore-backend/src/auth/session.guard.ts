@@ -8,6 +8,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { IS_PUBLIC_KEY } from './auth-context.js';
 import { AuthCookies } from './auth-cookies.js';
+import { permissionsOfRoles } from './permissions.js';
 import { SessionService } from './session.service.js';
 
 /**
@@ -40,7 +41,15 @@ export class SessionGuard implements CanActivate {
       throw new UnauthorizedException('Not logged in');
     }
 
-    req.auth = { sessionId: session.id, employee: session.employee };
+    const { roles: employeeRoles, ...employee } = session.employee;
+    const roles = employeeRoles.map(({ role }) => role);
+    req.auth = {
+      sessionId: session.id,
+      employee,
+      roles: roles.map(({ id, name, isAdmin }) => ({ id, name, isAdmin })),
+      permissions: permissionsOfRoles(roles),
+      isAdmin: roles.some((role) => role.isAdmin),
+    };
     return true;
   }
 }

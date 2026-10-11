@@ -16,8 +16,13 @@ async function main() {
     throw new Error('Set SEED_ADMIN_PASSWORD in .env');
   }
 
+  // The Admin role itself is created by the roles_and_permissions migration.
+  const adminRole = await prisma.role.findFirstOrThrow({
+    where: { isAdmin: true },
+  });
+
   const existing = await prisma.employee.findFirst({
-    where: { role: 'ADMIN', deletedAt: null },
+    where: { deletedAt: null, roles: { some: { roleId: adminRole.id } } },
   });
   if (existing) {
     console.log(
@@ -32,7 +37,7 @@ async function main() {
       password: await hash(password),
       firstName: 'Dev',
       lastName: 'Admin',
-      role: 'ADMIN',
+      roles: { create: { roleId: adminRole.id } },
       status: 'ACTIVE',
       activatedAt: new Date(),
       twoFactorEnabled: false, // no authenticator set up for the seeded admin
