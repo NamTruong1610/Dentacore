@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { OriginCheckMiddleware } from './auth/origin-check.middleware.js';
 import { EmployeeModule } from './employee/employee.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { RoleModule } from './role/role.module.js';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
     AuthModule,
     EmployeeModule,
     PrismaModule,
+    RoleModule,
   ],
   controllers: [AppController],
   providers: [AppService],
