@@ -13,19 +13,40 @@ datasource db {
 }
 
 model Employee {
-  id             String    @id @default(uuid(7)) @db.Uuid
+  id             String         @id @default(uuid(7)) @db.Uuid
   // Human-facing staff number. 6 digits, from a sequence starting at 100000 (see migration).
-  employeeNumber Int       @unique @default(autoincrement())
+  employeeNumber Int            @unique @default(autoincrement())
   email          String
-  password       String
+  password       String // argon2 hash. While PENDING, this is the temporary password's hash
   firstName      String
   lastName       String
   middleName     String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  role           Role           @default(EMPLOYEE)
+  status         EmployeeStatus @default(PENDING)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
   deletedAt      DateTime? // set when the employee is soft-deleted; null means active
 
+  // Activation: set when an admin creates the account, cleared once the employee activates
+  activationTokenHash String?   @unique // SHA-256 of the token in the activation link (the token itself is only in the email)
+  activationExpiresAt DateTime? // invite stops working after this (48h after creation)
+  activatedAt         DateTime?
+
+  // Two-factor auth (TOTP authenticator app)
+  twoFactorEnabled Boolean @default(true)
+  twoFactorSecret  String? // encrypted with TOTP_ENCRYPTION_KEY; set during activation
+
   addresses Address[] // one employee has many addresses
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+enum EmployeeStatus {
+  PENDING // invited by an admin, hasn't activated yet
+  ACTIVE
 }
 
 model Address {

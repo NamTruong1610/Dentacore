@@ -8,6 +8,12 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-dentacore}:${POSTGRES_PASSWORD:-dentacore}@postgres:5432/${POSTGRES_DB:-dentacore}
       REDIS_URL: redis://redis:6379
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-dentacore}:${RABBITMQ_PASSWORD:-dentacore}@rabbitmq:5672
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MAIL_FROM: ${MAIL_FROM:-Dentacore <no-reply@dentacore.local>}
+      ACTIVATION_URL: ${ACTIVATION_URL:-http://localhost:5173/activate}
+      TOTP_ISSUER: ${TOTP_ISSUER:-Dentacore}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:?Set TOTP_ENCRYPTION_KEY in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -15,6 +21,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      mailpit:
+        condition: service_started
 
   postgres:
     image: postgres:18
@@ -59,6 +67,13 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
+
+  # Catches all outgoing email in development. Inbox: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.31.2
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025" # SMTP
+      - "${MAILPIT_UI_PORT:-8025}:8025"   # web inbox
 
 volumes:
   postgres-data:
