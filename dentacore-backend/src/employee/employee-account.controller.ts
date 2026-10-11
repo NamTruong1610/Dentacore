@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { Public } from '../auth/auth-context.js';
+import { AuthRateLimit } from '../auth/rate-limit.js';
 import {
   CompleteActivationDto,
   StartActivationDto,
@@ -9,6 +10,7 @@ import { EmployeeAccountService } from './employee-account.service.js';
 // POST normally returns 201 Created; these don't create anything, so they return 200.
 // Public: the employee isn't logged in yet; the activation token + temporary password prove who they are.
 @Public()
+@AuthRateLimit()
 @Controller('employees')
 export class EmployeeAccountController {
   constructor(

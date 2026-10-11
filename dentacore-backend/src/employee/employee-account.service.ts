@@ -103,7 +103,7 @@ export class EmployeeAccountService {
     }
     if (
       !employee.activationExpiresAt ||
-      employee.activationExpiresAt < new Date()
+      employee.activationExpiresAt <= new Date() // same moment the status becomes EXPIRED
     ) {
       throw new GoneException(
         'This activation link has expired. Ask an administrator to send a new invite.',

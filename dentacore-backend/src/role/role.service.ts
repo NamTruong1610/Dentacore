@@ -155,21 +155,7 @@ export class RoleService {
       }
 
       if (removed.some((role) => role.isAdmin)) {
-        // Lock the Admin role row so two admins removing each other at the same moment are
-        // handled one after the other, and the second one sees the first change.
-        await tx.$queryRaw`SELECT id FROM "Role" WHERE "isAdmin" FOR UPDATE`;
-        const otherActiveAdmins = await tx.employeeRole.count({
-          where: {
-            role: { isAdmin: true },
-            employeeId: { not: employeeId },
-            employee: { status: 'ACTIVE', deletedAt: null },
-          },
-        });
-        if (otherActiveAdmins === 0) {
-          throw new ConflictException(
-            'This is the last active admin. Give someone else the Admin role first.',
-          );
-        }
+        await this.assertNotLastActiveAdmin(employeeId, tx);
       }
 
       await tx.employeeRole.deleteMany({
@@ -189,6 +175,68 @@ export class RoleService {
   async assertCanAssignRoles(actor: AuthContext, roleIds: string[]) {
     for (const role of await this.findRoles(roleIds)) {
       assertCanAssign(actor, role);
+    }
+  }
+
+  /**
+   * For editing or removing an employee: you can't manage someone who can do more than you
+   * (you need every permission their roles give), and only admins can manage admins.
+   * Throws 404 if the employee doesn't exist.
+   */
+  async assertCanManageEmployee(actor: AuthContext, employeeId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: employeeId, deletedAt: null },
+      include: {
+        roles: { include: { role: { include: { permissions: true } } } },
+      },
+    });
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+    const roles = employee.roles.map(({ role }) => role);
+    if (roles.some((role) => role.isAdmin) && !actor.isAdmin) {
+      throw new ForbiddenException('Only admins can change or remove an admin');
+    }
+    const missing = actor.isAdmin
+      ? []
+      : missingPermissions(actor.permissions, roles.flatMap(permissionsOfRole));
+    if (missing.length > 0) {
+      throw new ForbiddenException(
+        `You can't manage an employee who has permissions you don't have: ${missing.join(', ')}`,
+      );
+    }
+  }
+
+  /**
+   * Throws if `employeeId` is the only active admin, so removing their Admin role or deleting
+   * them would leave nobody able to administer the system. Call inside the transaction that
+   * makes the change.
+   */
+  async assertNotLastActiveAdmin(
+    employeeId: string,
+    db: Pick<PrismaService, '$queryRaw' | 'employeeRole'>,
+  ) {
+    // Lock the Admin role row so two admins removing each other at the same moment are
+    // handled one after the other, and the second one sees the first change.
+    await db.$queryRaw`SELECT id FROM "Role" WHERE "isAdmin" FOR UPDATE`;
+    const isAdmin =
+      (await db.employeeRole.count({
+        where: { employeeId, role: { isAdmin: true } },
+      })) > 0;
+    if (!isAdmin) {
+      return;
+    }
+    const otherActiveAdmins = await db.employeeRole.count({
+      where: {
+        role: { isAdmin: true },
+        employeeId: { not: employeeId },
+        employee: { status: 'ACTIVE', deletedAt: null },
+      },
+    });
+    if (otherActiveAdmins === 0) {
+      throw new ConflictException(
+        'This is the last active admin. Give someone else the Admin role first.',
+      );
     }
   }
 

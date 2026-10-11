@@ -10,7 +10,12 @@ import type { Permission } from './permissions.js';
 // The logged-in employee, without the fields PrismaService hides from every query.
 export type AuthEmployee = Omit<
   Employee,
-  'password' | 'twoFactorSecret' | 'activationTokenHash'
+  | 'password'
+  | 'twoFactorSecret'
+  | 'activationTokenHash'
+  | 'lastTotpStep'
+  | 'failedTotpAttempts'
+  | 'failedPasswordAttempts'
 >;
 
 export type AuthContext = {

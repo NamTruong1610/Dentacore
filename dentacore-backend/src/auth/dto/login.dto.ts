@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsStrongPassword,
   Matches,
 } from 'class-validator';
 
@@ -40,4 +41,30 @@ export class DisableTwoFactorDto {
 
   @Matches(SIX_DIGIT_CODE, { message: CODE_MESSAGE })
   code: string;
+}
+
+// Turning 2FA back on: the authenticator app still has the secret, so only a current code is needed.
+export class EnableTwoFactorDto {
+  @Matches(SIX_DIGIT_CODE, { message: CODE_MESSAGE })
+  code: string;
+}
+
+export class ChangePasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  currentPassword: string;
+
+  @IsStrongPassword(
+    {},
+    {
+      message:
+        'newPassword must be at least 8 characters and include an uppercase letter, a lowercase letter, a number and a symbol',
+    },
+  )
+  newPassword: string;
+
+  /** Required when 2FA is on. */
+  @IsOptional()
+  @Matches(SIX_DIGIT_CODE, { message: CODE_MESSAGE })
+  code?: string;
 }

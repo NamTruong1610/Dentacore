@@ -31,9 +31,13 @@ model Employee {
   activationExpiresAt DateTime? // invite stops working after this (48h after creation)
   activatedAt         DateTime?
 
+  // Wrong passwords, counted per employee (login, change password, turning 2FA off)
+  failedPasswordAttempts Int       @default(0) // wrong passwords in a row
+  passwordLockedUntil    DateTime? // set after too many wrong passwords; no password is accepted until then
+
   // Two-factor auth (TOTP authenticator app)
   twoFactorEnabled   Boolean   @default(true)
-  twoFactorSecret    String? // encrypted with TOTP_ENCRYPTION_KEY; set during activation
+  twoFactorSecret    String? // encrypted with TOTP_ENCRYPTION_KEY; set during activation, kept when 2FA is turned off so it can be turned back on
   lastTotpStep       Int? // 30-second period of the last accepted code, so each code works only once
   failedTotpAttempts Int       @default(0) // wrong codes in a row, across all login attempts
   totpLockedUntil    DateTime? // set after too many wrong codes; no codes are accepted until then
@@ -109,6 +113,8 @@ model LoginChallenge {
   @@index([employeeId])
 }
 
+// The API also reports EXPIRED: a PENDING employee whose activationExpiresAt has passed.
+// It's worked out from that timestamp rather than stored, so it's exact without a background job.
 enum EmployeeStatus {
   PENDING // invited by an admin, hasn't activated yet
   ACTIVE

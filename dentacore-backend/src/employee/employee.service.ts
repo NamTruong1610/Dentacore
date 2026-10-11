@@ -1,14 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AuthContext } from '../auth/auth-context.js';
 import { PasswordService } from '../auth/password.service.js';
 import { SessionService } from '../auth/session.service.js';
-import { Prisma } from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RoleService } from '../role/role.service.js';
 import { createToken } from '../auth/tokens.js';
 import { CreatePendingEmployeeDto } from './dto/create-employee.dto.js';
+import { UpdateEmployeeDto } from './dto/update-employee.dto.js';
+import {
+  type EffectiveStatus,
+  statusFilter,
+  withEffectiveStatus,
+} from './employee-status.js';
 
 const INVITE_VALID_FOR_MS = 48 * 60 * 60 * 1000; // 48 hours
 
@@ -25,9 +34,12 @@ export class EmployeeService {
     private readonly config: ConfigService,
   ) {}
 
-  // READ all
-  async findAllEmployees() {
-    return await this.prisma.employee.findMany({ where: { deletedAt: null } });
+  // READ all (optionally only PENDING, ACTIVE or EXPIRED)
+  async findAllEmployees(status?: EffectiveStatus) {
+    const employees = await this.prisma.employee.findMany({
+      where: { deletedAt: null, ...(status && statusFilter(status)) },
+    });
+    return employees.map(withEffectiveStatus);
   }
 
   // READ one
@@ -38,7 +50,7 @@ export class EmployeeService {
     if (!employee) {
       throw new NotFoundException(`Employee with id ${id} not found`);
     }
-    return employee;
+    return withEffectiveStatus(employee);
   }
 
   // CREATE (pending): an admin invites an employee, who then activates the account from the email
@@ -50,15 +62,7 @@ export class EmployeeService {
     // Inviting someone with a role follows the same rules as giving it to them later.
     await this.roleService.assertCanAssignRoles(actor, roleIds);
 
-    const temporaryPassword = this.passwordService.generateTemporaryPassword();
-    const passwordHash = await this.passwordService.hash(temporaryPassword);
-    const { token, tokenHash } = createToken();
-    const expiresAt = new Date(Date.now() + INVITE_VALID_FOR_MS);
-
-    const activationUrl = new URL(
-      this.config.getOrThrow<string>('ACTIVATION_URL'),
-    );
-    activationUrl.searchParams.set('token', token);
+    const invite = await this.newInvite();
 
     // Create the employee and send the email in one transaction: if sending fails,
     // the employee isn't saved, so there's never a pending account without an invite.
@@ -67,40 +71,105 @@ export class EmployeeService {
         const employee = await tx.employee.create({
           data: {
             ...createEmployeeDto,
-            password: passwordHash,
-            activationTokenHash: tokenHash,
-            activationExpiresAt: expiresAt,
+            ...invite.fields,
             roles: { create: roleIds.map((roleId) => ({ roleId })) },
           },
         });
-        await this.mailService.sendEmployeeInvite(employee.email, {
-          firstName: employee.firstName,
-          employeeNumber: employee.employeeNumber,
-          temporaryPassword,
-          activationUrl: activationUrl.toString(),
-          expiresAt,
-        });
-        return employee;
+        await this.sendInvite(employee, invite);
+        return withEffectiveStatus(employee);
       },
       { timeout: 15_000 }, // allow time for the SMTP server to respond
     );
   }
 
-  // UPDATE
-  async updateEmployee(id: string, data: Prisma.EmployeeUpdateInput) {
-    await this.findEmployeesById(id); // throws 404 if the employee doesn't exist
-    return await this.prisma.employee.update({ where: { id }, data });
+  // RESEND INVITE: new temporary password and link, valid for another 48 hours.
+  // The old link and temporary password stop working. Only for employees who haven't activated.
+  async resendInvite(actor: AuthContext, id: string) {
+    await this.roleService.assertCanManageEmployee(actor, id); // also 404 if missing
+    const existing = await this.findEmployeesById(id);
+    if (existing.status === 'ACTIVE') {
+      throw new ConflictException(
+        'This employee has already activated their account',
+      );
+    }
+
+    const invite = await this.newInvite();
+    return await this.prisma.$transaction(
+      async (tx) => {
+        const employee = await tx.employee.update({
+          where: { id },
+          data: {
+            ...invite.fields,
+            // Start activation from scratch: any half-finished 2FA setup is discarded.
+            twoFactorSecret: null,
+            lastTotpStep: null,
+          },
+        });
+        await this.sendInvite(employee, invite);
+        return withEffectiveStatus(employee);
+      },
+      { timeout: 15_000 },
+    );
+  }
+
+  // UPDATE: only name and email (see UpdateEmployeeDto)
+  async updateEmployee(actor: AuthContext, id: string, dto: UpdateEmployeeDto) {
+    await this.roleService.assertCanManageEmployee(actor, id); // also 404 if missing
+    const employee = await this.prisma.employee.update({
+      where: { id },
+      data: dto,
+    });
+    return withEffectiveStatus(employee);
   }
 
   // DELETE (soft)
-  async deleteEmployee(id: string) {
-    await this.findEmployeesById(id); // throws 404 if the employee doesn't exist
-    const employee = await this.prisma.employee.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+  async deleteEmployee(actor: AuthContext, id: string) {
+    await this.roleService.assertCanManageEmployee(actor, id); // also 404 if missing
+    await this.prisma.$transaction(async (tx) => {
+      // Never remove the last person who can administer the system.
+      await this.roleService.assertNotLastActiveAdmin(id, tx);
+      await tx.employee.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
     });
     // Log them out everywhere. (SessionGuard also rejects deleted employees on every request.)
     await this.sessionService.revokeAllForEmployee(id);
-    return employee;
+  }
+
+  // A fresh temporary password + activation link, and the fields that store them.
+  private async newInvite() {
+    const temporaryPassword = this.passwordService.generateTemporaryPassword();
+    const { token, tokenHash } = createToken();
+    const expiresAt = new Date(Date.now() + INVITE_VALID_FOR_MS);
+
+    const activationUrl = new URL(
+      this.config.getOrThrow<string>('ACTIVATION_URL'),
+    );
+    activationUrl.searchParams.set('token', token);
+
+    return {
+      temporaryPassword,
+      activationUrl: activationUrl.toString(),
+      expiresAt,
+      fields: {
+        password: await this.passwordService.hash(temporaryPassword),
+        activationTokenHash: tokenHash,
+        activationExpiresAt: expiresAt,
+      },
+    };
+  }
+
+  private async sendInvite(
+    employee: { email: string; firstName: string; employeeNumber: number },
+    invite: Awaited<ReturnType<EmployeeService['newInvite']>>,
+  ) {
+    await this.mailService.sendEmployeeInvite(employee.email, {
+      firstName: employee.firstName,
+      employeeNumber: employee.employeeNumber,
+      temporaryPassword: invite.temporaryPassword,
+      activationUrl: invite.activationUrl,
+      expiresAt: invite.expiresAt,
+    });
   }
 }
