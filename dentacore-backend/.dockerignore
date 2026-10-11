@@ -8,3 +8,12 @@ coverage
 !.env.example
 Dockerfile
 docker-compose.yml
+
+# Regenerated inside the image (prisma generate)
+src/generated
+
+# Local AI agent skills
+.agents
+.claude
+.windsurf
+skills-lock.json

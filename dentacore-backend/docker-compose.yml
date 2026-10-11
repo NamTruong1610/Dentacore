@@ -1,6 +1,8 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      target: runtime
     ports:
       - "${PORT:-3000}:3000"
     environment:
@@ -19,6 +21,8 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-20}
     depends_on:
+      migrate:
+        condition: service_completed_successfully # migrations applied first
       postgres:
         condition: service_healthy
       redis:
@@ -27,6 +31,17 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+
+  # Applies database migrations, then exits. The app starts only after it succeeds.
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-dentacore}:${POSTGRES_PASSWORD:-dentacore}@postgres:5432/${POSTGRES_DB:-dentacore}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   postgres:
     image: postgres:18
