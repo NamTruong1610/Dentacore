@@ -4,6 +4,12 @@ generate new controller for entity: nest g controller (module-name)
 boot up server: npm run start:dev
 create new nestjs project: nest new (project-name)
 download nest cli: npm i -g @nestjs/cli 
+Create the SQL and runs it on your database: npx prisma migrate dev --name init
+Write TypeScript code into src/generated/prisma: npx prisma generate                  
+Run both again every time you change schema.prisma. 
+Also add /src/generated to .gitignore, because that code is regenerated and shouldn't be committed.
+run dockerfile: docker compose up -d postgres redis rabbitmq
+
 
 Notes
 - static routes above dynamic ones (e.g. @Get('all') above @Get(':id'))
