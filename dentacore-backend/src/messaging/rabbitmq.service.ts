@@ -3,6 +3,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import amqp, {
@@ -144,6 +145,24 @@ export class RabbitMqService implements OnModuleInit, OnModuleDestroy {
         },
       });
       ch.ack(message);
+    }
+  }
+
+  /**
+   * Runs `fn` with a short-lived channel, for one-off operations like inspecting a queue.
+   * Messages taken with channel.get() and not acknowledged go back to their queue when the
+   * channel closes.
+   */
+  async withTemporaryChannel<T>(fn: (channel: ConfirmChannel) => Promise<T>) {
+    const connection = this.connection.connection;
+    if (!connection) {
+      throw new ServiceUnavailableException('RabbitMQ is not connected');
+    }
+    const channel = await connection.createConfirmChannel();
+    try {
+      return await fn(channel);
+    } finally {
+      await channel.close().catch(() => undefined);
     }
   }
 

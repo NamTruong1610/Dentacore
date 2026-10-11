@@ -21,6 +21,7 @@ import {
   DisableTwoFactorDto,
   EnableTwoFactorDto,
   LoginDto,
+  SetupTwoFactorDto,
   LoginTwoFactorDto,
 } from './dto/login.dto.js';
 import { AuthRateLimit } from './rate-limit.js';
@@ -166,7 +167,18 @@ export class AuthController {
     );
   }
 
-  // POST /auth/2fa/enable — turns 2FA back on with the same authenticator app (no new QR code)
+  // POST /auth/2fa/setup — new authenticator: returns a QR code; then confirm with /2fa/enable
+  @AuthRateLimit()
+  @Post('2fa/setup')
+  @HttpCode(HttpStatus.OK)
+  setupTwoFactor(
+    @CurrentAuth() auth: AuthContext,
+    @Body() dto: SetupTwoFactorDto,
+  ) {
+    return this.authService.setupTwoFactor(auth.employee.id, dto);
+  }
+
+  // POST /auth/2fa/enable — turns 2FA on with a code from the set-up authenticator app
   @AuthRateLimit()
   @Post('2fa/enable')
   @HttpCode(HttpStatus.OK)

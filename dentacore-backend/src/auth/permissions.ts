@@ -14,6 +14,8 @@ export const PERMISSIONS = {
   'employee:assign-roles': "Change employees' roles",
   'role:read': 'View roles and permissions',
   'role:manage': 'Create, edit and delete roles',
+  'dead-letter:manage':
+    'View, re-send and discard failed background messages (emails, notifications)',
 } as const;
 
 export type Permission = keyof typeof PERMISSIONS;
