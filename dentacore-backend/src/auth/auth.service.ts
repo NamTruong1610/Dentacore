@@ -7,7 +7,13 @@ import {
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LOGIN_CHALLENGE_MS } from './auth-cookies.js';
-import { DisableTwoFactorDto, LoginDto } from './dto/login.dto.js';
+import { CredentialsService } from './credentials.service.js';
+import {
+  ChangePasswordDto,
+  DisableTwoFactorDto,
+  EnableTwoFactorDto,
+  LoginDto,
+} from './dto/login.dto.js';
 import { PasswordService } from './password.service.js';
 import { ClientInfo, SessionService } from './session.service.js';
 import { createToken, hashToken } from './tokens.js';
@@ -36,6 +42,7 @@ export class AuthService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwordService: PasswordService,
+    private readonly credentialsService: CredentialsService,
     private readonly twoFactorService: TwoFactorService,
     private readonly sessionService: SessionService,
   ) {}
@@ -50,15 +57,17 @@ export class AuthService implements OnModuleInit {
   ): Promise<LoginResult> {
     const employee = await this.prisma.employee.findUnique({
       where: { employeeNumber, status: 'ACTIVE', deletedAt: null },
-      omit: { password: false },
     });
-    const passwordOk = await this.passwordService.verify(
-      employee?.password ?? this.dummyPasswordHash,
-      password,
-    );
-    if (!employee || !passwordOk) {
+    if (!employee) {
+      await this.passwordService.verify(this.dummyPasswordHash, password);
       throw new UnauthorizedException('Invalid employee ID or password');
     }
+    // Counts wrong passwords and locks the employee out after too many (see CredentialsService).
+    await this.credentialsService.verifyPassword(
+      employee.id,
+      password,
+      'Invalid employee ID or password',
+    );
 
     await this.sessionService.deleteExpiredForEmployee(employee.id);
 
@@ -136,26 +145,74 @@ export class AuthService implements OnModuleInit {
   ) {
     const employee = await this.prisma.employee.findUniqueOrThrow({
       where: { id: employeeId },
-      omit: { password: false },
     });
-    if (!(await this.passwordService.verify(employee.password, password))) {
-      throw new UnauthorizedException('Incorrect password');
-    }
+    await this.credentialsService.verifyPassword(employeeId, password);
     if (!employee.twoFactorEnabled) {
       throw new BadRequestException('Two-factor authentication is already off');
     }
     await this.twoFactorService.verify(employeeId, code);
 
+    // The secret is kept, so 2FA can be turned back on with the same authenticator app.
     await this.prisma.employee.update({
       where: { id: employeeId },
-      data: {
-        twoFactorEnabled: false,
-        twoFactorSecret: null,
-        lastTotpStep: null,
-      },
+      data: { twoFactorEnabled: false },
     });
     // A security setting changed: log out every other device.
     await this.sessionService.revokeAllForEmployee(employeeId, sessionId);
     return { twoFactorEnabled: false };
+  }
+
+  /** Turns 2FA back on using the secret kept from activation: just a current code, no new QR. */
+  async enableTwoFactor(employeeId: string, { code }: EnableTwoFactorDto) {
+    const employee = await this.prisma.employee.findUniqueOrThrow({
+      where: { id: employeeId },
+    });
+    if (employee.twoFactorEnabled) {
+      throw new BadRequestException('Two-factor authentication is already on');
+    }
+    // Also checks the secret exists, the code is current and unused, and the lockout.
+    await this.twoFactorService.verify(employeeId, code);
+
+    await this.prisma.employee.update({
+      where: { id: employeeId },
+      data: { twoFactorEnabled: true },
+    });
+    return { twoFactorEnabled: true };
+  }
+
+  /** Needs the current password, plus a 2FA code if 2FA is on. Logs out other devices. */
+  async changePassword(
+    employeeId: string,
+    sessionId: string,
+    { currentPassword, newPassword, code }: ChangePasswordDto,
+  ) {
+    const employee = await this.prisma.employee.findUniqueOrThrow({
+      where: { id: employeeId },
+    });
+    await this.credentialsService.verifyPassword(employeeId, currentPassword);
+    if (employee.twoFactorEnabled) {
+      if (!code) {
+        throw new BadRequestException(
+          'Enter the 6-digit code from your authenticator app',
+        );
+      }
+      await this.twoFactorService.verify(employeeId, code);
+    }
+    if (newPassword === currentPassword) {
+      throw new BadRequestException(
+        'The new password must be different from the current one',
+      );
+    }
+
+    await this.prisma.employee.update({
+      where: { id: employeeId },
+      data: { password: await this.passwordService.hash(newPassword) },
+    });
+    // Anyone else logged in with the old password is logged out.
+    const otherSessionsEnded = await this.sessionService.revokeAllForEmployee(
+      employeeId,
+      sessionId,
+    );
+    return { otherSessionsEnded };
   }
 }

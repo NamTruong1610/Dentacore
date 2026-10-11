@@ -17,10 +17,13 @@ import { AuthCookies } from './auth-cookies.js';
 import { type AuthContext, CurrentAuth, Public } from './auth-context.js';
 import { AuthService } from './auth.service.js';
 import {
+  ChangePasswordDto,
   DisableTwoFactorDto,
+  EnableTwoFactorDto,
   LoginDto,
   LoginTwoFactorDto,
 } from './dto/login.dto.js';
+import { AuthRateLimit } from './rate-limit.js';
 import { ClientInfo, SessionService } from './session.service.js';
 
 // @Res({ passthrough: true }) lets a handler set cookies while still returning a normal value.
@@ -34,6 +37,7 @@ export class AuthController {
 
   // POST /auth/login — step 1: employee ID + password
   @Public()
+  @AuthRateLimit()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
@@ -52,6 +56,7 @@ export class AuthController {
 
   // POST /auth/login/2fa — step 2: the code from the authenticator app
   @Public()
+  @AuthRateLimit()
   @Post('login/2fa')
   @HttpCode(HttpStatus.OK)
   async loginTwoFactor(
@@ -129,7 +134,23 @@ export class AuthController {
     }
   }
 
+  // POST /auth/password — needs current password (+ 2FA code if on); logs out other devices
+  @AuthRateLimit()
+  @Post('password')
+  @HttpCode(HttpStatus.OK)
+  changePassword(
+    @CurrentAuth() auth: AuthContext,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(
+      auth.employee.id,
+      auth.sessionId,
+      dto,
+    );
+  }
+
   // POST /auth/2fa/disable — needs password + current code; logs out other devices
+  @AuthRateLimit()
   @Post('2fa/disable')
   @HttpCode(HttpStatus.OK)
   disableTwoFactor(
@@ -141,6 +162,17 @@ export class AuthController {
       auth.sessionId,
       dto,
     );
+  }
+
+  // POST /auth/2fa/enable — turns 2FA back on with the same authenticator app (no new QR code)
+  @AuthRateLimit()
+  @Post('2fa/enable')
+  @HttpCode(HttpStatus.OK)
+  enableTwoFactor(
+    @CurrentAuth() auth: AuthContext,
+    @Body() dto: EnableTwoFactorDto,
+  ) {
+    return this.authService.enableTwoFactor(auth.employee.id, dto);
   }
 
   private setSessionCookie(

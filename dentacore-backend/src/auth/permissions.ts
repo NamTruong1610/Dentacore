@@ -8,7 +8,9 @@
  */
 export const PERMISSIONS = {
   'employee:read': 'View employees',
-  'employee:invite': 'Invite new employees',
+  'employee:invite': 'Invite new employees and resend invites',
+  'employee:update': "Edit employees' details",
+  'employee:delete': 'Remove employees',
   'employee:assign-roles': "Change employees' roles",
   'role:read': 'View roles and permissions',
   'role:manage': 'Create, edit and delete roles',
