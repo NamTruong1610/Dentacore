@@ -7,7 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import type { AuthContext } from '../auth/auth-context.js';
 import { PasswordService } from '../auth/password.service.js';
 import { SessionService } from '../auth/session.service.js';
-import { MailService } from '../mail/mail.service.js';
+import { EMAIL, type EmployeeInviteEmail } from '../mail/email-messages.js';
+import { OutboxService } from '../messaging/outbox.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RoleService } from '../role/role.service.js';
 import { createToken } from '../auth/tokens.js';
@@ -30,7 +31,7 @@ export class EmployeeService {
     private readonly passwordService: PasswordService,
     private readonly sessionService: SessionService,
     private readonly roleService: RoleService,
-    private readonly mailService: MailService,
+    private readonly outbox: OutboxService,
     private readonly config: ConfigService,
   ) {}
 
@@ -64,22 +65,20 @@ export class EmployeeService {
 
     const invite = await this.newInvite();
 
-    // Create the employee and send the email in one transaction: if sending fails,
-    // the employee isn't saved, so there's never a pending account without an invite.
-    return await this.prisma.$transaction(
-      async (tx) => {
-        const employee = await tx.employee.create({
-          data: {
-            ...createEmployeeDto,
-            ...invite.fields,
-            roles: { create: roleIds.map((roleId) => ({ roleId })) },
-          },
-        });
-        await this.sendInvite(employee, invite);
-        return withEffectiveStatus(employee);
-      },
-      { timeout: 15_000 }, // allow time for the SMTP server to respond
-    );
+    // The employee and their invite email are saved together; the email is sent from the
+    // queue right after (and retried if the mail server is down).
+    return await this.prisma.$transaction(async (tx) => {
+      const employee = await tx.employee.create({
+        data: {
+          ...createEmployeeDto,
+          ...invite.fields,
+          invitedById: actor.employee.id,
+          roles: { create: roleIds.map((roleId) => ({ roleId })) },
+        },
+      });
+      await this.queueInviteEmail(tx, employee, invite);
+      return withEffectiveStatus(employee);
+    });
   }
 
   // RESEND INVITE: new temporary password and link, valid for another 48 hours.
@@ -94,22 +93,21 @@ export class EmployeeService {
     }
 
     const invite = await this.newInvite();
-    return await this.prisma.$transaction(
-      async (tx) => {
-        const employee = await tx.employee.update({
-          where: { id },
-          data: {
-            ...invite.fields,
-            // Start activation from scratch: any half-finished 2FA setup is discarded.
-            twoFactorSecret: null,
-            lastTotpStep: null,
-          },
-        });
-        await this.sendInvite(employee, invite);
-        return withEffectiveStatus(employee);
-      },
-      { timeout: 15_000 },
-    );
+    return await this.prisma.$transaction(async (tx) => {
+      const employee = await tx.employee.update({
+        where: { id },
+        data: {
+          ...invite.fields,
+          // Whoever re-sent it is told when the employee activates.
+          invitedById: actor.employee.id,
+          // Start activation from scratch: any half-finished 2FA setup is discarded.
+          twoFactorSecret: null,
+          lastTotpStep: null,
+        },
+      });
+      await this.queueInviteEmail(tx, employee, invite);
+      return withEffectiveStatus(employee);
+    });
   }
 
   // UPDATE: only name and email (see UpdateEmployeeDto)
@@ -160,16 +158,19 @@ export class EmployeeService {
     };
   }
 
-  private async sendInvite(
+  private async queueInviteEmail(
+    tx: Parameters<OutboxService['add']>[0],
     employee: { email: string; firstName: string; employeeNumber: number },
     invite: Awaited<ReturnType<EmployeeService['newInvite']>>,
   ) {
-    await this.mailService.sendEmployeeInvite(employee.email, {
+    const email: EmployeeInviteEmail = {
+      to: employee.email,
       firstName: employee.firstName,
       employeeNumber: employee.employeeNumber,
       temporaryPassword: invite.temporaryPassword,
       activationUrl: invite.activationUrl,
-      expiresAt: invite.expiresAt,
-    });
+      expiresAt: invite.expiresAt.toISOString(),
+    };
+    await this.outbox.add(tx, EMAIL.employeeInvite, email);
   }
 }

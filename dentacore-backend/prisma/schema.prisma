@@ -42,10 +42,49 @@ model Employee {
   failedTotpAttempts Int       @default(0) // wrong codes in a row, across all login attempts
   totpLockedUntil    DateTime? // set after too many wrong codes; no codes are accepted until then
 
+  // Who sent (or last re-sent) the invite. They're told when the employee activates.
+  invitedById String?    @db.Uuid
+  invitedBy   Employee?  @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  invited     Employee[] @relation("InvitedBy")
+
   addresses       Address[] // one employee has many addresses
   sessions        Session[]
   loginChallenges LoginChallenge[]
   roles           EmployeeRole[] // an employee can have several roles
+  notifications   Notification[]
+}
+
+// Messages waiting to be published to RabbitMQ (transactional outbox). A row is written in the
+// same transaction as the change that caused it, so a message is never lost or sent for a change
+// that was rolled back. The relay (src/messaging/outbox.relay.ts) publishes rows and deletes them.
+model OutboxMessage {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  routingKey String // e.g. "email.employee-invite", "employee.activated"
+  payload    String // encrypted JSON (may contain temporary passwords and activation links)
+  createdAt  DateTime @default(now())
+  attempts   Int      @default(0) // failed publish attempts
+  lastError  String?
+
+  @@index([createdAt])
+}
+
+// In-app notifications, shown in a list and pushed live to open browser tabs.
+model Notification {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  recipientId     String    @db.Uuid
+  recipient       Employee  @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  type            String // e.g. "employee.activated"
+  title           String
+  body            String?
+  data            Json? // details for the frontend, e.g. { employeeId }
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+  // The queue message that created it. Messages can be delivered more than once;
+  // this makes sure each one creates at most one notification per recipient.
+  sourceMessageId String
+
+  @@unique([sourceMessageId, recipientId])
+  @@index([recipientId, createdAt])
 }
 
 // Roles are created and edited by the business (see src/role). The permissions a role can hold

@@ -6,6 +6,9 @@ import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { OriginCheckMiddleware } from './auth/origin-check.middleware.js';
 import { EmployeeModule } from './employee/employee.module.js';
+import { MailModule } from './mail/mail.module.js';
+import { MessagingModule } from './messaging/messaging.module.js';
+import { NotificationModule } from './notification/notification.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RoleModule } from './role/role.module.js';
 
@@ -17,6 +20,9 @@ import { RoleModule } from './role/role.module.js';
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     AuthModule,
     EmployeeModule,
+    MailModule,
+    MessagingModule,
+    NotificationModule,
     PrismaModule,
     RoleModule,
   ],

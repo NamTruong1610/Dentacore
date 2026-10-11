@@ -7,7 +7,7 @@ function serviceWithKey(key = randomBytes(32).toString('base64')) {
   const values: Record<string, string> = { TOTP_ENCRYPTION_KEY: key };
   const config = {
     getOrThrow: (name: string) => values[name],
-    get: (_name: string, fallback: string) => fallback,
+    get: (name: string, fallback?: string) => values[name] ?? fallback,
   } as unknown as ConfigService;
   return new TotpService(config);
 }

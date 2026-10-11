@@ -141,11 +141,13 @@ export class AuthController {
   changePassword(
     @CurrentAuth() auth: AuthContext,
     @Body() dto: ChangePasswordDto,
+    @Req() req: Request,
   ) {
     return this.authService.changePassword(
       auth.employee.id,
       auth.sessionId,
       dto,
+      clientInfo(req),
     );
   }
 
