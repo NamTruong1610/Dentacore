@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PasswordService } from '../auth/password.service.js';
 import { SessionService } from '../auth/session.service.js';
-import { MailService } from '../mail/mail.service.js';
+import { OutboxService } from '../messaging/outbox.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RoleService } from '../role/role.service.js';
 import { EmployeeService } from './employee.service.js';
@@ -19,7 +19,7 @@ describe('EmployeeService', () => {
         { provide: PasswordService, useValue: {} },
         { provide: SessionService, useValue: {} },
         { provide: RoleService, useValue: {} },
-        { provide: MailService, useValue: {} },
+        { provide: OutboxService, useValue: {} },
         { provide: ConfigService, useValue: {} },
       ],
     }).compile();

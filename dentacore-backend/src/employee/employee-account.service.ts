@@ -8,7 +8,12 @@ import { PasswordService } from '../auth/password.service.js';
 import { hashToken } from '../auth/tokens.js';
 import { TotpService } from '../auth/totp.service.js';
 import { TwoFactorService } from '../auth/two-factor.service.js';
+import { OutboxService } from '../messaging/outbox.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  EMPLOYEE_EVENTS,
+  type EmployeeActivatedEvent,
+} from './employee-events.js';
 import {
   CompleteActivationDto,
   StartActivationDto,
@@ -28,6 +33,7 @@ export class EmployeeAccountService {
     private readonly passwordService: PasswordService,
     private readonly totpService: TotpService,
     private readonly twoFactorService: TwoFactorService,
+    private readonly outbox: OutboxService,
   ) {}
 
   async startActivation({ token, temporaryPassword }: StartActivationDto) {
@@ -69,17 +75,28 @@ export class EmployeeAccountService {
     // Same checks as login: wrong-code lockout, and this code can't be reused to log in.
     await this.twoFactorService.verify(employee.id, code);
 
-    return await this.prisma.employee.update({
-      where: { id: employee.id },
-      data: {
-        password: await this.passwordService.hash(newPassword),
-        status: 'ACTIVE',
-        activatedAt: new Date(),
-        twoFactorEnabled: true,
-        // The link and temporary password can't be used again.
-        activationTokenHash: null,
-        activationExpiresAt: null,
-      },
+    const passwordHash = await this.passwordService.hash(newPassword);
+    const activatedAt = new Date();
+    return await this.prisma.$transaction(async (tx) => {
+      const activated = await tx.employee.update({
+        where: { id: employee.id },
+        data: {
+          password: passwordHash,
+          status: 'ACTIVE',
+          activatedAt,
+          twoFactorEnabled: true,
+          // The link and temporary password can't be used again.
+          activationTokenHash: null,
+          activationExpiresAt: null,
+        },
+      });
+      // Tells whoever is interested (the inviting admin is notified and emailed).
+      const event: EmployeeActivatedEvent = {
+        employeeId: employee.id,
+        activatedAt: activatedAt.toISOString(),
+      };
+      await this.outbox.add(tx, EMPLOYEE_EVENTS.activated, event);
+      return activated;
     });
   }
 

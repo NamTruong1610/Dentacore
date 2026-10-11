@@ -15,6 +15,7 @@ const omit = {
   },
   session: { tokenHash: true },
   loginChallenge: { tokenHash: true },
+  notification: { sourceMessageId: true },
 } as const;
 
 type PrismaOptions = {

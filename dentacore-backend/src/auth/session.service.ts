@@ -100,6 +100,23 @@ export class SessionService {
     return session;
   }
 
+  /** True if the session still exists, hasn't expired, and its employee can still log in. */
+  async isActive(sessionId: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      select: {
+        expiresAt: true,
+        employee: { select: { status: true, deletedAt: true } },
+      },
+    });
+    return (
+      !!session &&
+      session.expiresAt > new Date() &&
+      session.employee.status === 'ACTIVE' &&
+      !session.employee.deletedAt
+    );
+  }
+
   async listForEmployee(employeeId: string) {
     return await this.prisma.session.findMany({
       where: { employeeId, expiresAt: { gt: new Date() } },

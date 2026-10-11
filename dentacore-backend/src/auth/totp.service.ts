@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { Secret, TOTP } from 'otpauth';
 import QRCode from 'qrcode';
+import { decrypt, encrypt, keyFromBase64 } from '../crypto/aes-gcm.js';
 
 /**
  * TOTP two-factor auth: the 6-digit codes from authenticator apps (Google Authenticator, 1Password, ...).
@@ -17,15 +17,10 @@ export class TotpService {
   private readonly issuer: string;
 
   constructor(config: ConfigService) {
-    this.key = Buffer.from(
-      config.getOrThrow<string>('TOTP_ENCRYPTION_KEY'),
-      'base64',
+    this.key = keyFromBase64(
+      config.get<string>('TOTP_ENCRYPTION_KEY'),
+      'TOTP_ENCRYPTION_KEY',
     );
-    if (this.key.length !== 32) {
-      throw new Error(
-        'TOTP_ENCRYPTION_KEY must be 32 bytes, base64-encoded (openssl rand -base64 32)',
-      );
-    }
     this.issuer = config.get<string>('TOTP_ISSUER', 'Dentacore');
   }
 
@@ -41,7 +36,7 @@ export class TotpService {
       secret,
       otpauthUri,
       qrCodeDataUrl: await QRCode.toDataURL(otpauthUri),
-      encryptedSecret: this.encrypt(secret),
+      encryptedSecret: encrypt(this.key, secret),
     };
   }
 
@@ -52,7 +47,7 @@ export class TotpService {
    * so the same code can't be used twice (see TwoFactorService).
    */
   matchStep(encryptedSecret: string, code: string): number | null {
-    const totp = this.totp(this.decrypt(encryptedSecret));
+    const totp = this.totp(decrypt(this.key, encryptedSecret));
     const delta = totp.validate({ token: code, window: 1 });
     return delta === null ? null : totp.counter() + delta;
   }
@@ -63,30 +58,5 @@ export class TotpService {
       label: accountName,
       secret: Secret.fromBase32(secret),
     });
-  }
-
-  // Stored as "iv.authTag.ciphertext" (base64url).
-  private encrypt(plaintext: string) {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
-    const ciphertext = Buffer.concat([
-      cipher.update(plaintext, 'utf8'),
-      cipher.final(),
-    ]);
-    return [iv, cipher.getAuthTag(), ciphertext]
-      .map((part) => part.toString('base64url'))
-      .join('.');
-  }
-
-  private decrypt(stored: string) {
-    const [iv, authTag, ciphertext] = stored
-      .split('.')
-      .map((part) => Buffer.from(part, 'base64url'));
-    const decipher = createDecipheriv('aes-256-gcm', this.key, iv);
-    decipher.setAuthTag(authTag);
-    return Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]).toString('utf8');
   }
 }

@@ -5,6 +5,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { EMAIL, type PasswordChangedEmail } from '../mail/email-messages.js';
+import { OutboxService } from '../messaging/outbox.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LOGIN_CHALLENGE_MS } from './auth-cookies.js';
 import { CredentialsService } from './credentials.service.js';
@@ -45,6 +47,7 @@ export class AuthService implements OnModuleInit {
     private readonly credentialsService: CredentialsService,
     private readonly twoFactorService: TwoFactorService,
     private readonly sessionService: SessionService,
+    private readonly outbox: OutboxService,
   ) {}
 
   async onModuleInit() {
@@ -185,6 +188,7 @@ export class AuthService implements OnModuleInit {
     employeeId: string,
     sessionId: string,
     { currentPassword, newPassword, code }: ChangePasswordDto,
+    client: ClientInfo,
   ) {
     const employee = await this.prisma.employee.findUniqueOrThrow({
       where: { id: employeeId },
@@ -204,9 +208,20 @@ export class AuthService implements OnModuleInit {
       );
     }
 
-    await this.prisma.employee.update({
-      where: { id: employeeId },
-      data: { password: await this.passwordService.hash(newPassword) },
+    const passwordHash = await this.passwordService.hash(newPassword);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.employee.update({
+        where: { id: employeeId },
+        data: { password: passwordHash },
+      });
+      // Lets the employee notice if it wasn't them.
+      const email: PasswordChangedEmail = {
+        to: employee.email,
+        firstName: employee.firstName,
+        changedAt: new Date().toISOString(),
+        ...client,
+      };
+      await this.outbox.add(tx, EMAIL.passwordChanged, email);
     });
     // Anyone else logged in with the old password is logged out.
     const otherSessionsEnded = await this.sessionService.revokeAllForEmployee(
