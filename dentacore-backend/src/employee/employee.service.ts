@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PasswordService } from '../auth/password.service.js';
+import { SessionService } from '../auth/session.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { createActivationToken } from './activation-token.js';
+import { createToken } from '../auth/tokens.js';
 import { CreatePendingEmployeeDto } from './dto/create-employee.dto.js';
 
 const INVITE_VALID_FOR_MS = 48 * 60 * 60 * 1000; // 48 hours
@@ -16,6 +17,7 @@ export class EmployeeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwordService: PasswordService,
+    private readonly sessionService: SessionService,
     private readonly mailService: MailService,
     private readonly config: ConfigService,
   ) {}
@@ -37,11 +39,11 @@ export class EmployeeService {
   }
 
   // CREATE (pending): an admin invites an employee, who then activates the account from the email
-  // TODO: only admins should be able to call this once auth exists
+  // Requires login (SessionGuard). TODO: restrict to admins once role checks exist
   async createPendingEmployee(createEmployeeDto: CreatePendingEmployeeDto) {
     const temporaryPassword = this.passwordService.generateTemporaryPassword();
     const passwordHash = await this.passwordService.hash(temporaryPassword);
-    const { token, tokenHash } = createActivationToken();
+    const { token, tokenHash } = createToken();
     const expiresAt = new Date(Date.now() + INVITE_VALID_FOR_MS);
 
     const activationUrl = new URL(
@@ -83,9 +85,12 @@ export class EmployeeService {
   // DELETE (soft)
   async deleteEmployee(id: string) {
     await this.findEmployeesById(id); // throws 404 if the employee doesn't exist
-    return await this.prisma.employee.update({
+    const employee = await this.prisma.employee.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
+    // Log them out everywhere. (SessionGuard also rejects deleted employees on every request.)
+    await this.sessionService.revokeAllForEmployee(id);
+    return employee;
   }
 }

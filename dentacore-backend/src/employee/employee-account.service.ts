@@ -5,17 +5,17 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PasswordService } from '../auth/password.service.js';
+import { hashToken } from '../auth/tokens.js';
 import { TotpService } from '../auth/totp.service.js';
+import { TwoFactorService } from '../auth/two-factor.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { hashActivationToken } from './activation-token.js';
 import {
   CompleteActivationDto,
   StartActivationDto,
 } from './dto/activation.dto.js';
-import { DisableTwoFactorDto } from './dto/disable-two-factor.dto.js';
 
 /**
- * Account lifecycle for employees: activating an invite and turning 2FA off.
+ * Activating an invite. (Turning 2FA off lives in AuthController, for logged-in employees.)
  *
  * Activation happens in two steps, both from the page the email links to:
  *   1. startActivation: check the link + temporary password, create a 2FA secret, return the QR code
@@ -27,6 +27,7 @@ export class EmployeeAccountService {
     private readonly prisma: PrismaService,
     private readonly passwordService: PasswordService,
     private readonly totpService: TotpService,
+    private readonly twoFactorService: TwoFactorService,
   ) {}
 
   async startActivation({ token, temporaryPassword }: StartActivationDto) {
@@ -60,14 +61,13 @@ export class EmployeeAccountService {
     if (!employee.twoFactorSecret) {
       throw new BadRequestException('Set up two-factor authentication first');
     }
-    if (!this.totpService.verifyCode(employee.twoFactorSecret, code)) {
-      throw new BadRequestException('Invalid 2FA code');
-    }
     if (newPassword === temporaryPassword) {
       throw new BadRequestException(
         'Choose a new password, not the temporary one',
       );
     }
+    // Same checks as login: wrong-code lockout, and this code can't be reused to log in.
+    await this.twoFactorService.verify(employee.id, code);
 
     return await this.prisma.employee.update({
       where: { id: employee.id },
@@ -83,40 +83,10 @@ export class EmployeeAccountService {
     });
   }
 
-  // TODO: once login exists, identify the employee from their session instead of employeeNumber.
-  async disableTwoFactor({
-    employeeNumber,
-    password,
-    code,
-  }: DisableTwoFactorDto) {
-    const employee = await this.prisma.employee.findUnique({
-      where: { employeeNumber, status: 'ACTIVE', deletedAt: null },
-      omit: { password: false, twoFactorSecret: false },
-    });
-    if (
-      !employee ||
-      !(await this.passwordService.verify(employee.password, password))
-    ) {
-      throw new UnauthorizedException('Invalid employee ID or password');
-    }
-    if (!employee.twoFactorEnabled || !employee.twoFactorSecret) {
-      throw new BadRequestException('Two-factor authentication is already off');
-    }
-    if (!this.totpService.verifyCode(employee.twoFactorSecret, code)) {
-      throw new UnauthorizedException('Invalid 2FA code');
-    }
-
-    await this.prisma.employee.update({
-      where: { id: employee.id },
-      data: { twoFactorEnabled: false, twoFactorSecret: null },
-    });
-    return { twoFactorEnabled: false };
-  }
-
   private async findValidInvite(token: string, temporaryPassword: string) {
     const employee = await this.prisma.employee.findUnique({
       where: {
-        activationTokenHash: hashActivationToken(token),
+        activationTokenHash: hashToken(token),
         status: 'PENDING',
         deletedAt: null,
       },
