@@ -23,9 +23,11 @@ describe('TotpService', () => {
 
     expect(setup.otpauthUri).toMatch(/^otpauth:\/\/totp\/Dentacore:100000\?/);
     expect(setup.qrCodeDataUrl).toMatch(/^data:image\/png;base64,/);
-    expect(
-      service.verifyCode(setup.encryptedSecret, currentCode(setup.secret)),
-    ).toBe(true);
+    const step = service.matchStep(
+      setup.encryptedSecret,
+      currentCode(setup.secret),
+    );
+    expect(step).toBe(Math.floor(Date.now() / 1000 / 30));
   });
 
   it('rejects a wrong code', async () => {
@@ -33,7 +35,7 @@ describe('TotpService', () => {
     const setup = await service.createSetup('100000');
     const wrong = currentCode(setup.secret) === '000000' ? '111111' : '000000';
 
-    expect(service.verifyCode(setup.encryptedSecret, wrong)).toBe(false);
+    expect(service.matchStep(setup.encryptedSecret, wrong)).toBeNull();
   });
 
   it('never stores the secret in plain text', async () => {
@@ -44,7 +46,7 @@ describe('TotpService', () => {
   it('cannot read a secret encrypted with a different key', async () => {
     const setup = await serviceWithKey().createSetup('100000');
     expect(() =>
-      serviceWithKey().verifyCode(setup.encryptedSecret, '123456'),
+      serviceWithKey().matchStep(setup.encryptedSecret, '123456'),
     ).toThrow();
   });
 

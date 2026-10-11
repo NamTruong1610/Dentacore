@@ -33,10 +33,45 @@ model Employee {
   activatedAt         DateTime?
 
   // Two-factor auth (TOTP authenticator app)
-  twoFactorEnabled Boolean @default(true)
-  twoFactorSecret  String? // encrypted with TOTP_ENCRYPTION_KEY; set during activation
+  twoFactorEnabled   Boolean   @default(true)
+  twoFactorSecret    String? // encrypted with TOTP_ENCRYPTION_KEY; set during activation
+  lastTotpStep       Int? // 30-second period of the last accepted code, so each code works only once
+  failedTotpAttempts Int       @default(0) // wrong codes in a row, across all login attempts
+  totpLockedUntil    DateTime? // set after too many wrong codes; no codes are accepted until then
 
-  addresses Address[] // one employee has many addresses
+  addresses       Address[] // one employee has many addresses
+  sessions        Session[]
+  loginChallenges LoginChallenge[]
+}
+
+// One row per logged-in device. The cookie holds a random token; only its hash is stored here.
+model Session {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  tokenHash         String   @unique // SHA-256 of the session cookie value
+  employeeId        String   @db.Uuid
+  employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  rememberMe        Boolean
+  createdAt         DateTime @default(now())
+  lastSeenAt        DateTime @default(now())
+  expiresAt         DateTime // pushed forward while the employee is active (idle timeout), never past absoluteExpiresAt
+  absoluteExpiresAt DateTime // hard limit from login time; never moves
+  userAgent         String?
+  ipAddress         String?
+
+  @@index([employeeId])
+}
+
+// Password was correct, 2FA code not entered yet. Lives 5 minutes; exchanged for a Session.
+model LoginChallenge {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  tokenHash  String   @unique // SHA-256 of the login challenge cookie value
+  employeeId String   @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  rememberMe Boolean // chosen at the password step, copied onto the session
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([employeeId])
 }
 
 enum Role {

@@ -45,10 +45,16 @@ export class TotpService {
     };
   }
 
-  /** Checks a 6-digit code. Also accepts the previous/next code, to allow for clock drift. */
-  verifyCode(encryptedSecret: string, code: string) {
+  /**
+   * Checks a 6-digit code against the previous, current and next 30-second period
+   * (allows for slow typing and clock drift).
+   * Returns the period the code belongs to, or null if it's wrong. Callers save that period
+   * so the same code can't be used twice (see TwoFactorService).
+   */
+  matchStep(encryptedSecret: string, code: string): number | null {
     const totp = this.totp(this.decrypt(encryptedSecret));
-    return totp.validate({ token: code, window: 1 }) !== null;
+    const delta = totp.validate({ token: code, window: 1 });
+    return delta === null ? null : totp.counter() + delta;
   }
 
   private totp(secret: string, accountName?: string) {

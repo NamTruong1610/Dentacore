@@ -10,6 +10,8 @@ const omit = {
     twoFactorSecret: true,
     activationTokenHash: true,
   },
+  session: { tokenHash: true },
+  loginChallenge: { tokenHash: true },
 } as const;
 
 type PrismaOptions = {
