@@ -15,10 +15,12 @@ import {
   DisableTwoFactorDto,
   EnableTwoFactorDto,
   LoginDto,
+  SetupTwoFactorDto,
 } from './dto/login.dto.js';
 import { PasswordService } from './password.service.js';
 import { ClientInfo, SessionService } from './session.service.js';
 import { createToken, hashToken } from './tokens.js';
+import { TotpService } from './totp.service.js';
 import { TwoFactorService } from './two-factor.service.js';
 
 type LoginResult =
@@ -46,6 +48,7 @@ export class AuthService implements OnModuleInit {
     private readonly passwordService: PasswordService,
     private readonly credentialsService: CredentialsService,
     private readonly twoFactorService: TwoFactorService,
+    private readonly totpService: TotpService,
     private readonly sessionService: SessionService,
     private readonly outbox: OutboxService,
   ) {}
@@ -169,11 +172,17 @@ export class AuthService implements OnModuleInit {
   async enableTwoFactor(employeeId: string, { code }: EnableTwoFactorDto) {
     const employee = await this.prisma.employee.findUniqueOrThrow({
       where: { id: employeeId },
+      omit: { twoFactorSecret: false },
     });
     if (employee.twoFactorEnabled) {
       throw new BadRequestException('Two-factor authentication is already on');
     }
-    // Also checks the secret exists, the code is current and unused, and the lockout.
+    if (!employee.twoFactorSecret) {
+      throw new BadRequestException(
+        'No authenticator is set up yet. Set one up first (POST /auth/2fa/setup).',
+      );
+    }
+    // Also checks the code is current and unused, and the lockout.
     await this.twoFactorService.verify(employeeId, code);
 
     await this.prisma.employee.update({
@@ -181,6 +190,40 @@ export class AuthService implements OnModuleInit {
       data: { twoFactorEnabled: true },
     });
     return { twoFactorEnabled: true };
+  }
+
+  /**
+   * Starts setting up an authenticator: for accounts that never had one (like the seeded
+   * admin), or to switch to a new phone. Returns a new secret and QR code; 2FA stays off until
+   * POST /auth/2fa/enable confirms a code from the app.
+   *
+   * Needs the password, and only works while 2FA is off: otherwise someone with a stolen
+   * session could attach their own phone and lock the real employee out.
+   */
+  async setupTwoFactor(employeeId: string, { password }: SetupTwoFactorDto) {
+    const employee = await this.prisma.employee.findUniqueOrThrow({
+      where: { id: employeeId },
+    });
+    if (employee.twoFactorEnabled) {
+      throw new BadRequestException(
+        'Two-factor authentication is on. Turn it off first to set up a new authenticator.',
+      );
+    }
+    await this.credentialsService.verifyPassword(employeeId, password);
+
+    const setup = await this.totpService.createSetup(
+      String(employee.employeeNumber),
+    );
+    await this.prisma.employee.update({
+      where: { id: employeeId },
+      // Replaces any previous secret; codes from the old app stop working.
+      data: { twoFactorSecret: setup.encryptedSecret, lastTotpStep: null },
+    });
+    return {
+      secret: setup.secret, // for typing into the app by hand
+      otpauthUri: setup.otpauthUri,
+      qrCodeDataUrl: setup.qrCodeDataUrl,
+    };
   }
 
   /** Needs the current password, plus a 2FA code if 2FA is on. Logs out other devices. */

@@ -7,6 +7,7 @@ import { AuthService } from './auth.service.js';
 import { CredentialsService } from './credentials.service.js';
 import { PasswordService } from './password.service.js';
 import { PermissionsGuard } from './permissions.guard.js';
+import { SessionCleanupService } from './session-cleanup.service.js';
 import { SessionGuard } from './session.guard.js';
 import { SessionService } from './session.service.js';
 import { TotpService } from './totp.service.js';
@@ -21,6 +22,7 @@ import { TwoFactorService } from './two-factor.service.js';
     AuthCookies,
     CredentialsService,
     PasswordService,
+    SessionCleanupService,
     SessionService,
     TotpService,
     TwoFactorService,

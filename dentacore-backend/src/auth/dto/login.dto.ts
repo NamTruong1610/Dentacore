@@ -68,3 +68,10 @@ export class ChangePasswordDto {
   @Matches(SIX_DIGIT_CODE, { message: CODE_MESSAGE })
   code?: string;
 }
+
+// Setting up a (new) authenticator app needs the password.
+export class SetupTwoFactorDto {
+  @IsString()
+  @IsNotEmpty()
+  password: string;
+}
